@@ -1,0 +1,131 @@
+// Get elements
+const accountBalance = document.getElementById("account-balance");
+const accountCurrency = document.getElementById("account-currency");
+const iframeContainer = document.getElementById("iframe-container");
+const derivBotIframe = document.getElementById("deriv-bot-iframe");
+const tickSelection = document.getElementById("tick-selection");
+const overNumber = document.getElementById("over-number");
+const underNumber = document.getElementById("under-number");
+
+const app_id = '70011'; // Replace with your app ID
+let ws;
+let heartbeatInterval;
+const HEARTBEAT_INTERVAL = 30000;
+
+// Initialize WebSocket connection
+const connectWebSocket = () => {
+    ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${app_id}`);
+
+    ws.onopen = () => {
+        console.log("WebSocket connected.");
+        startHeartbeat();
+        const token = localStorage.getItem("deriv_token");
+        if (token) authorize(token);
+    };
+
+    ws.onmessage = (message) => {
+        const response = JSON.parse(message.data);
+        handleApiResponse(response);
+    };
+
+    ws.onclose = () => {
+        console.warn("WebSocket closed. Reconnecting...");
+        stopHeartbeat();
+        setTimeout(connectWebSocket, 2000);
+    };
+
+    ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        stopHeartbeat();
+    };
+};
+
+// Start Heartbeat
+const startHeartbeat = () => {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ ping: 1 }));
+            console.log("Heartbeat ping sent.");
+        }
+    }, HEARTBEAT_INTERVAL);
+};
+
+const stopHeartbeat = () => {
+    clearInterval(heartbeatInterval);
+};
+
+// Authorize the user
+const authorize = (token) => {
+    if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ authorize: token }));
+        console.log("Authorization request sent.");
+    }
+};
+
+// Handle WebSocket Responses
+const handleApiResponse = (response) => {
+    console.log("Response received:", response);
+
+    if (response.msg_type === "authorize") {
+        console.log("Authorization successful.");
+        localStorage.setItem("deriv_token", response.authorize.token);
+
+        getBalance();
+        displayDerivBotIframe(response.authorize.token);
+    } else if (response.msg_type === "balance") {
+        if (response.balance) {
+            updateBalanceUI(response.balance);
+        } else if (response.error) {
+            console.error("Error:", response.error.message);
+            alert(`Error: ${response.error.message}`);
+        }
+    }
+};
+
+// Fetch Account Balance
+const getBalance = () => {
+    if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ balance: 1 }));
+        console.log("Balance request sent.");
+    }
+};
+
+// Update Balance UI
+const updateBalanceUI = ({ balance, currency }) => {
+    accountBalance.textContent = `Balance: ${balance}`;
+    accountCurrency.textContent = `${currency}`;
+    updateOverUnderNumbers();
+};
+
+// Display the Deriv Bot iframe
+const displayDerivBotIframe = (token) => {
+    iframeContainer.style.display = "block";
+    derivBotIframe.src = `https://app.deriv.com/bot?token=${token}`;
+};
+
+// Update Over and Under Numbers based on selected ticks
+const updateOverUnderNumbers = () => {
+    const selectedTicks = parseInt(tickSelection.value, 10) || 1;
+    overNumber.textContent = `Over: ${selectedTicks + 1}`;
+    underNumber.textContent = `Under: ${selectedTicks - 1}`;
+};
+
+// Initialize on window load
+window.onload = () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get("token1");
+
+    if (token) {
+        localStorage.setItem("deriv_token", token);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        authorize(token);
+    } else {
+        const storedToken = localStorage.getItem("deriv_token");
+        if (storedToken) {
+            authorize(storedToken);
+        } else {
+            requestAuthorization();
+        }
+    }
+};
